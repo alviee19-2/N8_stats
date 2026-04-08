@@ -97,6 +97,18 @@ class PokerHandParser:
         else:
             return Position.LP
 
+    def _get_big_blind_amount(self) -> float:
+        """Extract the big blind amount from parsed stakes."""
+        if not self.hands:
+            return 0.0
+
+        stakes = self.hands[0].stakes
+        stakes_match = re.search(r'\$?([0-9.]+)\s*/\s*\$?([0-9.]+)', stakes)
+        if not stakes_match:
+            return 0.0
+
+        return float(stakes_match.group(2))
+
     def _calculate_hero_investment(self, lines: List[str]) -> float:
         """Track Hero's actual chips invested in the pot across streets."""
         hero_invested = 0.0
@@ -353,7 +365,12 @@ class PokerHandParser:
         hero_lost = sum(1 for h in self.hands if h.hero_action == 'lost')
         
         total_profit = sum(h.hero_profit for h in self.hands)
+        total_net_profit = sum(h.hero_net_profit for h in self.hands)
         avg_profit = total_profit / total_hands if total_hands > 0 else 0
+        avg_net_profit = total_net_profit / total_hands if total_hands > 0 else 0
+        big_blind = self._get_big_blind_amount()
+        gross_bb_per_100 = ((total_profit / big_blind) / total_hands * 100) if total_hands > 0 and big_blind > 0 else 0
+        net_bb_per_100 = ((total_net_profit / big_blind) / total_hands * 100) if total_hands > 0 and big_blind > 0 else 0
         
         # Win rate (hands where Hero went to showdown)
         showdown_hands = hero_won + hero_lost
@@ -389,9 +406,12 @@ class PokerHandParser:
         print(f"  └─ 贏:       {hero_won} ({win_rate:.1f}%)")
         print(f"  └─ 輸:       {hero_lost} ({100-win_rate:.1f}%)")
         print()
-        print(f"總盈虧:        ${total_profit:+.2f}")
-        print(f"平均盈虧/手:   ${avg_profit:+.2f}")
-        print(f"平均盈虧/BB:   {avg_profit/0.02:+.2f} BB")
+        print(f"總毛盈虧:      ${total_profit:+.2f}")
+        print(f"總淨盈虧:      ${total_net_profit:+.2f}")
+        print(f"平均毛盈虧/手: ${avg_profit:+.2f}")
+        print(f"平均淨盈虧/手: ${avg_net_profit:+.2f}")
+        print(f"毛 BB/100:     {gross_bb_per_100:+.2f}")
+        print(f"淨 BB/100:     {net_bb_per_100:+.2f}")
         
         # Position breakdown
         print()
