@@ -159,6 +159,13 @@ class PokerHandParser:
                 amount_match = re.search(r'\$([0-9.]+)', line)
                 if amount_match:
                     hero_invested -= float(amount_match.group(1))
+
+        # EV cashout risk is an additional cost paid by Hero.
+        for line in lines:
+            if line.startswith('Hero:') and 'Pays Cashout Risk' in line:
+                amount_match = re.search(r'\$([0-9.]+)', line)
+                if amount_match:
+                    hero_invested += float(amount_match.group(1))
         
         # Determine Hero's action result
         hero_folded = False
@@ -172,15 +179,20 @@ class PokerHandParser:
                 hero_action = "folded"
                 break
         
-        # If not folded, find what Hero collected
+        # If not folded, find what Hero collected or received from EV cashout.
         if not hero_folded:
             for line in lines:
-                if 'Hero' in line and 'collected' in line:
+                if line.startswith('Hero collected'):
                     amount_match = re.search(r'collected \$([0-9.]+)', line)
                     if amount_match:
-                        hero_collected = float(amount_match.group(1))
-                        hero_action = "won"
-                        break
+                        hero_collected += float(amount_match.group(1))
+                elif line.startswith('Hero:') and 'Receives Cashout' in line:
+                    amount_match = re.search(r'\$([0-9.]+)', line)
+                    if amount_match:
+                        hero_collected += float(amount_match.group(1))
+
+            if hero_collected > 0.0:
+                hero_action = "won"
             
             # If no collection line, Hero lost at showdown
             if hero_collected == 0.0 and not hero_folded:
@@ -329,11 +341,10 @@ class PokerHandParser:
             print("沒有牌局數據")
             return
         
-        # Configure UTF-8/CJK font fallback to avoid Chinese glyph issues.
-        self._configure_plot_font()
-        
         # Set style
         sns.set_style("whitegrid")
+        # Re-apply the CJK-capable font after seaborn resets sans-serif fonts.
+        self._configure_plot_font()
         plt.rcParams['figure.figsize'] = (15, 12)
         plt.rcParams['font.size'] = 10
         
