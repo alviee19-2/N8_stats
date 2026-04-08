@@ -41,6 +41,7 @@ class Hand:
     hero_cards: str
     hero_action: str  # 'folded', 'won', 'lost'
     hero_profit: float
+    hero_net_profit: float
     result_summary: str
     
     def __repr__(self):
@@ -95,6 +96,102 @@ class PokerHandParser:
             return Position.MP
         else:
             return Position.LP
+
+    def _calculate_hero_investment(self, lines: List[str]) -> float:
+        """Track Hero's actual chips invested in the pot across streets."""
+        hero_invested = 0.0
+        hero_street_put = 0.0
+
+        for line in lines:
+            if line.startswith('*** FLOP ***') or line.startswith('*** TURN ***') or line.startswith('*** RIVER ***'):
+                hero_street_put = 0.0
+                continue
+
+            if line.startswith('Hero: posts small blind '):
+                amount_match = re.search(r'\$([0-9.]+)', line)
+                if amount_match:
+                    amount = float(amount_match.group(1))
+                    hero_invested += amount
+                    hero_street_put += amount
+                continue
+
+            if line.startswith('Hero: posts big blind '):
+                amount_match = re.search(r'\$([0-9.]+)', line)
+                if amount_match:
+                    amount = float(amount_match.group(1))
+                    hero_invested += amount
+                    hero_street_put += amount
+                continue
+
+            if line.startswith('Hero: calls '):
+                amount_match = re.search(r'\$([0-9.]+)', line)
+                if amount_match:
+                    amount = float(amount_match.group(1))
+                    hero_invested += amount
+                    hero_street_put += amount
+                continue
+
+            if line.startswith('Hero: bets '):
+                amount_match = re.search(r'\$([0-9.]+)', line)
+                if amount_match:
+                    amount = float(amount_match.group(1))
+                    hero_invested += amount
+                    hero_street_put += amount
+                continue
+
+            if line.startswith('Hero: raises '):
+                raise_match = re.search(r'raises \$([0-9.]+) to \$([0-9.]+)', line)
+                if raise_match:
+                    to_amount = float(raise_match.group(2))
+                    hero_invested += to_amount - hero_street_put
+                    hero_street_put = to_amount
+                continue
+
+            if 'returned to Hero' in line:
+                amount_match = re.search(r'\$([0-9.]+)', line)
+                if amount_match:
+                    amount = float(amount_match.group(1))
+                    hero_invested -= amount
+                    hero_street_put = max(0.0, hero_street_put - amount)
+                continue
+
+        return hero_invested
+
+    def _calculate_hero_cashout_risk(self, lines: List[str]) -> float:
+        """Track EV cashout risk paid by Hero outside the pot."""
+        cashout_risk = 0.0
+        for line in lines:
+            if line.startswith('Hero:') and 'Pays Cashout Risk' in line:
+                amount_match = re.search(r'\$([0-9.]+)', line)
+                if amount_match:
+                    cashout_risk += float(amount_match.group(1))
+        return cashout_risk
+
+    def _parse_summary_amounts(self, lines: List[str]) -> Tuple[float, float]:
+        """Parse total pot and total deductions shown in the summary line."""
+        summary_line = next((line for line in lines if line.startswith('Total pot ')), '')
+        if not summary_line:
+            return 0.0, 0.0
+
+        total_pot_match = re.search(r'Total pot \$([0-9.]+)', summary_line)
+        total_pot = float(total_pot_match.group(1)) if total_pot_match else 0.0
+
+        total_deductions = 0.0
+        for label in ['Rake', 'Jackpot', 'Bingo', 'Fortune', 'Tax']:
+            amount_match = re.search(fr'{label} \$([0-9.]+)', summary_line)
+            if amount_match:
+                total_deductions += float(amount_match.group(1))
+
+        return total_pot, total_deductions
+
+    def _calculate_total_collected_from_pot(self, lines: List[str]) -> float:
+        """Sum all amounts collected from the pot by every player."""
+        total_collected = 0.0
+        for line in lines:
+            amount_match = re.search(r'collected \$([0-9.]+) from pot', line)
+            if amount_match:
+                total_collected += float(amount_match.group(1))
+        return total_collected
     
     def parse_hand(self, hand_text: str) -> Hand:
         """Parse a single hand from text"""
@@ -144,32 +241,16 @@ class PokerHandParser:
         if hero_seat:
             hero_position = self.get_position(hero_seat, button_seat)
         
-        # Calculate Hero's total investment
-        hero_invested = 0.0
-        for line in lines:
-            if line.startswith('Hero:'):
-                # Match any monetary action: posts, calls, bets, raises
-                amount_match = re.search(r'\$([0-9.]+)', line)
-                if amount_match and any(action in line for action in ['posts', 'calls', 'bets', 'raises', 'all-in']):
-                    hero_invested += float(amount_match.group(1))
-        
-        # Subtract any uncalled bets returned to Hero
-        for line in lines:
-            if 'returned to Hero' in line:
-                amount_match = re.search(r'\$([0-9.]+)', line)
-                if amount_match:
-                    hero_invested -= float(amount_match.group(1))
-
-        # EV cashout risk is an additional cost paid by Hero.
-        for line in lines:
-            if line.startswith('Hero:') and 'Pays Cashout Risk' in line:
-                amount_match = re.search(r'\$([0-9.]+)', line)
-                if amount_match:
-                    hero_invested += float(amount_match.group(1))
+        # Track Hero's chips put into the pot and any separate EV cashout fee.
+        hero_invested = self._calculate_hero_investment(lines)
+        hero_cashout_risk = self._calculate_hero_cashout_risk(lines)
+        _total_pot, total_deductions = self._parse_summary_amounts(lines)
+        total_collected_from_pot = self._calculate_total_collected_from_pot(lines)
         
         # Determine Hero's action result
         hero_folded = False
-        hero_collected = 0.0
+        hero_pot_collected = 0.0
+        hero_cashout_received = 0.0
         hero_action = "unknown"
         
         # Check if Hero folded
@@ -185,21 +266,27 @@ class PokerHandParser:
                 if line.startswith('Hero collected'):
                     amount_match = re.search(r'collected \$([0-9.]+)', line)
                     if amount_match:
-                        hero_collected += float(amount_match.group(1))
+                        hero_pot_collected += float(amount_match.group(1))
                 elif line.startswith('Hero:') and 'Receives Cashout' in line:
                     amount_match = re.search(r'\$([0-9.]+)', line)
                     if amount_match:
-                        hero_collected += float(amount_match.group(1))
+                        hero_cashout_received += float(amount_match.group(1))
 
-            if hero_collected > 0.0:
+            if hero_pot_collected + hero_cashout_received > 0.0:
                 hero_action = "won"
             
             # If no collection line, Hero lost at showdown
-            if hero_collected == 0.0 and not hero_folded:
+            if hero_pot_collected + hero_cashout_received == 0.0 and not hero_folded:
                 hero_action = "lost"
         
-        # Calculate actual profit/loss
-        hero_profit = hero_collected - hero_invested
+        # External "Winloss" matches gross pot share before rake/jackpot deductions
+        # and excludes separate EV cashout risk fees.
+        hero_fee_share = 0.0
+        if hero_pot_collected > 0.0 and total_collected_from_pot > 0.0:
+            hero_fee_share = total_deductions * (hero_pot_collected / total_collected_from_pot)
+
+        hero_gross_profit = (hero_pot_collected + hero_cashout_received + hero_fee_share) - hero_invested
+        hero_net_profit = (hero_pot_collected + hero_cashout_received) - hero_invested - hero_cashout_risk
         
         # Get summary
         result_summary = lines[-1] if lines else ""
@@ -217,7 +304,8 @@ class PokerHandParser:
             hero_position=hero_position,
             hero_cards=hero_cards,
             hero_action=hero_action,
-            hero_profit=hero_profit,
+            hero_profit=hero_gross_profit,
+            hero_net_profit=hero_net_profit,
             result_summary=result_summary
         )
     
