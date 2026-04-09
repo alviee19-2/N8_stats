@@ -7,8 +7,11 @@
 ## 安裝
 
 ```bash
-# 無需額外安裝，使用 Python 3.8+ 即可
+# Python 3.8+ 版本
 python --version
+
+# 安裝必要套件
+pip install pandas matplotlib seaborn
 ```
 
 ## 基本用法
@@ -34,7 +37,7 @@ python analyze.py --DATE 0407 --plot
 - **平均盈虧/手** - 每手牌平均的損益
 - **平均盈虧/BB** - 以大盲注為單位的平均損益（用於跨盤局比較）
 
-### � 視覺化圖表（--plot 選項）
+### 📈 視覺化圖表（--plot 選項）
 
 使用 `--plot` 參數會生成一個包含 6 個子圖表的分析圖表 (PNG)，保存在 `pnl_<日期>.png`：
 
@@ -63,7 +66,7 @@ python analyze.py --DATE 0407 --plot
    - 綠色 = 勝率 > 50%
    - 紅色 = 勝率 < 50%
 
-### �📍 位置分析
+### 📍 位置分析
 
 6-max 遊戲中的位置（從 Button 開始順時針）：
 - **BTN** - Button（按鈕位，最後出手）
@@ -109,8 +112,8 @@ Top 10 最賺錢的起手牌，顯示：
 
 ## 檔案結構
 
-```
-/workspaces/N8_stats/
+```text
+N8_stats/
 ├── 0406/              # 2026/04/06 的牌局
 │   └── GG*.txt       # 各個牌桌的記錄
 ├── 0407/              # 2026/04/07 的牌局
